@@ -347,8 +347,110 @@ export default function ZipGame() {
     currentStreak: 0,
     lastSolvedDate: '',
     streakFreezes: 2,
-    lastDailySolvedDate: ''
+    lastDailySolvedDate: '',
+    hintsUsedToday: 0,
+    lastHintUsedDate: ''
   });
+
+  const [isAdBlockDetected, setIsAdBlockDetected] = useState(false);
+  const [isCheckingAdBlock, setIsCheckingAdBlock] = useState(true);
+  const [toastMsg, setToastMsg] = useState("");
+
+  // Monetag Ad Modal States
+  const [showAdModal, setShowAdModal] = useState(false);
+  const [adCountDown, setAdCountDown] = useState(5);
+  const [adActionType, setAdActionType] = useState<'hint' | 'next_level' | null>(null);
+  const [pendingNextLevel, setPendingNextLevel] = useState<ZipLevel | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+  };
+
+  const checkAdBlocker = async () => {
+    setIsCheckingAdBlock(true);
+    let adBlockDetected = false;
+
+    try {
+      // Test 1: Fetch common ad resource to detect network interception
+      const url = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js';
+      await fetch(url, { method: 'HEAD', mode: 'no-cors', cache: 'no-store' });
+      adBlockDetected = false;
+    } catch (e) {
+      adBlockDetected = true;
+    }
+
+    if (!adBlockDetected) {
+      // Test 2: DOM inspection (check if ads stylesheet filters hide ad element)
+      const adElement = document.createElement('div');
+      adElement.className = 'ad-banner adsbox pub_300x250';
+      adElement.setAttribute('style', 'position: absolute; left: -9999px; top: -9999px; height: 1px; width: 1px; pointer-events: none;');
+      document.body.appendChild(adElement);
+      
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
+      const styles = window.getComputedStyle(adElement);
+      if (styles.display === 'none' || styles.visibility === 'hidden' || adElement.offsetHeight === 0) {
+        adBlockDetected = true;
+      }
+      document.body.removeChild(adElement);
+    }
+
+    setIsAdBlockDetected(adBlockDetected);
+    setIsCheckingAdBlock(false);
+    return adBlockDetected;
+  };
+
+  // Run AdBlock check on mount
+  useEffect(() => {
+    checkAdBlocker();
+  }, []);
+
+  // Toast auto-clear
+  useEffect(() => {
+    if (toastMsg) {
+      const t = setTimeout(() => setToastMsg(""), 3500);
+      return () => clearTimeout(t);
+    }
+  }, [toastMsg]);
+
+  // Ad Modal countdown timer
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (showAdModal && adCountDown > 0) {
+      interval = setInterval(() => {
+        setAdCountDown(prev => prev - 1);
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [showAdModal, adCountDown]);
+
+  const startAdFlow = (type: 'hint' | 'next_level', nextLvl?: ZipLevel) => {
+    setAdActionType(type);
+    if (nextLvl) setPendingNextLevel(nextLvl);
+    setAdCountDown(5);
+    setShowAdModal(true);
+
+    // Open Monetag Smart/Direct Link in new tab
+    const monetagDirectLink = "https://alwingulla.com/88/pounce.js";
+    try {
+      window.open(monetagDirectLink, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      console.warn("Popup blocked by browser", e);
+    }
+  };
+
+  const handleAdComplete = () => {
+    setShowAdModal(false);
+    if (adActionType === 'hint') {
+      executeGetHint();
+    } else if (adActionType === 'next_level' && pendingNextLevel) {
+      handleStartLevel(pendingNextLevel);
+      setPendingNextLevel(null);
+    }
+    setAdActionType(null);
+  };
 
   const [currentLevel, setCurrentLevel] = useState<ZipLevel | null>(null);
   const [activeTab, setActiveTab] = useState<'levels' | 'fácil' | 'medio' | 'difícil' | 'stats'>('levels');
@@ -436,7 +538,9 @@ export default function ZipGame() {
           lastSolvedDate: parsed.lastSolvedDate || '',
           streakFreezes: typeof parsed.streakFreezes === 'number' ? parsed.streakFreezes : 2,
           lastDailySolvedDate: parsed.lastDailySolvedDate || '',
-          solveHistory: parsed.solveHistory || []
+          solveHistory: parsed.solveHistory || [],
+          hintsUsedToday: parsed.hintsUsedToday || 0,
+          lastHintUsedDate: parsed.lastHintUsedDate || ''
         });
       } catch (e) {
         console.error("Error loading progress", e);
@@ -462,7 +566,9 @@ export default function ZipGame() {
         lastSolvedDate: '',
         streakFreezes: 2,
         lastDailySolvedDate: '',
-        solveHistory: []
+        solveHistory: [],
+        hintsUsedToday: 0,
+        lastHintUsedDate: ''
       };
       saveProgress(reset);
       setCurrentLevel(null);
@@ -968,9 +1074,38 @@ export default function ZipGame() {
     setIsTimerActive(true);
     playUndoSound();
   };
-
   // intelligent Snap & Hint System
   const handleGetHint = () => {
+    if (!currentLevel || levelSolved) return;
+
+    const todayStr = getLocalDateString(new Date());
+    let hintsUsed = progress.hintsUsedToday || 0;
+    let lastDate = progress.lastHintUsedDate || '';
+
+    // Reset daily count if date has changed
+    if (lastDate !== todayStr) {
+      hintsUsed = 0;
+      lastDate = todayStr;
+    }
+
+    if (hintsUsed < 2) {
+      // Free hint available!
+      const updatedProgress: UserProgress = {
+        ...progress,
+        hintsUsedToday: hintsUsed + 1,
+        lastHintUsedDate: todayStr
+      };
+      saveProgress(updatedProgress);
+      showToast(`💡 Pista gratuita utilizada (${hintsUsed + 1}/2 hoy)`);
+      executeGetHint();
+    } else {
+      // Watch ad!
+      startAdFlow('hint');
+    }
+  };
+
+  // Core hint logic
+  const executeGetHint = () => {
     if (!currentLevel || levelSolved) return;
 
     const sol = currentLevel.solution;
@@ -1011,7 +1146,6 @@ export default function ZipGame() {
       }
     }
   };
-
   // Keyboard Navigation Controls
   useEffect(() => {
     if (!currentLevel || levelSolved) return;
@@ -1125,6 +1259,57 @@ export default function ZipGame() {
     if (activeTab === 'levels') return true;
     return lvl.difficulty === activeTab;
   });
+
+  if (isCheckingAdBlock) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-[#E0E0E0] font-sans antialiased flex flex-col items-center justify-center p-6 relative overflow-hidden">
+        <CosmicCanvasBackground />
+        <div className="relative z-10 flex flex-col items-center justify-center space-y-4 animate-pulse">
+          <div className="w-12 h-12 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin" />
+          <span className="text-xs uppercase tracking-widest font-black text-indigo-400">
+            Analizando resonancia cuántica...
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  if (isAdBlockDetected) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-[#E0E0E0] font-sans antialiased flex flex-col items-center justify-center p-6 relative overflow-hidden">
+        <CosmicCanvasBackground />
+        <div className="relative z-10 w-full max-w-lg bg-slate-950/65 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-rose-550/30 text-center space-y-6">
+          <div className="mx-auto w-20 h-20 rounded-full bg-rose-950/40 border border-rose-900/45 flex items-center justify-center text-rose-500 animate-pulse">
+            <span className="text-3xl font-black">!</span>
+          </div>
+
+          <div className="space-y-3">
+            <span className="text-xs font-bold text-rose-400 uppercase tracking-widest bg-rose-950/40 px-3 py-1 rounded-full border border-rose-900/45">
+              NÚCLEO ENERGÉTICO BLOQUEADO
+            </span>
+            <h2 className="text-2xl font-black text-white pt-2 leading-tight">
+              AdBlocker Detectado en tu Navegador
+            </h2>
+            <p className="text-slate-300 text-sm leading-relaxed font-semibold">
+              Para canalizar la energía cuántica de nuestros servidores y mantener el juego <strong>100% gratis e ilimitado</strong>, por favor desactiva tu bloqueador de anuncios (AdBlock, uBlock, etc.) para este sitio web.
+            </p>
+            <p className="text-xs text-indigo-400 font-semibold leading-relaxed bg-indigo-950/20 p-3 rounded-xl border border-indigo-500/15">
+              💡 Al permitir anuncios, nos ayudas a mantener vivos los portales del Forjador Cósmico. ¡Gracias por tu valioso apoyo!
+            </p>
+          </div>
+
+          <div className="pt-4">
+            <button
+              onClick={checkAdBlocker}
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-rose-500 to-rose-600 hover:brightness-110 duration-155 text-white font-bold text-sm py-4 px-6 rounded-xl shadow-lg shadow-rose-500/20 cursor-pointer active:scale-95 transition-all"
+            >
+              Reintentar / Verificar Conexión
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-[#E0E0E0] font-sans antialiased selection:bg-indigo-500/30 selection:text-white pb-12 relative overflow-hidden transition-all duration-300">
@@ -2014,7 +2199,7 @@ export default function ZipGame() {
                     <div className="space-y-4">
                       {currentLevel.id < ZIP_LEVELS.length ? (
                         <button
-                          onClick={() => handleStartLevel(ZIP_LEVELS[currentLevel.id])} // index level 0 is id 1, so ZIP_LEVELS[currentLevel.id] represents level id+1
+                          onClick={() => startAdFlow('next_level', ZIP_LEVELS[currentLevel.id])} // index level 0 is id 1, so ZIP_LEVELS[currentLevel.id] represents level id+1
                           className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:brightness-110 duration-155 text-white font-bold text-sm py-3.5 px-4 rounded-xl shadow-lg shadow-indigo-500/20 cursor-pointer active:scale-95 transition-all"
                         >
                           Siguiente Nivel
@@ -2165,6 +2350,80 @@ export default function ZipGame() {
         )}
       </AnimatePresence>
 
+      {/* DYNAMIC TOAST NOTIFICATION */}
+      <AnimatePresence>
+        {toastMsg && (
+          <motion.div
+            initial={{ opacity: 0, y: -50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.9 }}
+            className="fixed top-20 left-1/2 -translate-x-1/2 z-[90] px-4 py-2.5 bg-slate-950/80 backdrop-blur-md border border-indigo-500/30 text-white rounded-full text-xs font-semibold shadow-2xl flex items-center gap-2 select-none"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
+            <span>{toastMsg}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* MONETAG REWARDED AD MODAL */}
+      <AnimatePresence>
+        {showAdModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/90 backdrop-blur-md" 
+            />
+            
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 15 }}
+              className="relative z-10 w-full max-w-sm bg-slate-950/65 backdrop-blur-xl rounded-3xl p-6 shadow-2xl border border-indigo-500/25 text-center space-y-6"
+            >
+              <div className="mx-auto w-20 h-20 rounded-full bg-indigo-950/40 border border-indigo-900/40 flex items-center justify-center text-indigo-400 relative overflow-hidden">
+                <div className="absolute inset-0 border-2 border-indigo-500/20 rounded-full animate-spin" style={{ animationDuration: '4s' }} />
+                <Sparkles className="w-9 h-9 text-indigo-400 animate-pulse" />
+              </div>
+
+              <div className="space-y-1.5">
+                <span className="text-[10px] uppercase font-bold text-indigo-400 tracking-widest bg-indigo-950/40 px-3 py-1 rounded-full border border-indigo-900/45">
+                  SALTO HIPERESPACIAL PUBLICITARIO
+                </span>
+                <h3 className="text-xl font-extrabold text-white pt-2">
+                  Estableciendo Enlace de Portal...
+                </h3>
+                <p className="text-slate-400 text-xs leading-relaxed">
+                  Estamos abriendo el portal de anuncios de Monetag en otra pestaña para recargar el núcleo de tu propulsor cósmico.
+                </p>
+              </div>
+
+              <div className="bg-indigo-950/20 border border-indigo-500/10 p-5 rounded-2xl flex flex-col items-center justify-center">
+                {adCountDown > 0 ? (
+                  <div className="space-y-1">
+                    <span className="text-3xl font-black font-mono text-cyan-400">{adCountDown}</span>
+                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Segundos para Cargar</p>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleAdComplete}
+                    className="w-full flex items-center justify-center gap-1.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:brightness-110 duration-155 text-white font-bold text-sm py-3 rounded-xl shadow-lg shadow-emerald-500/20 cursor-pointer active:scale-95 transition-all animate-bounce"
+                  >
+                    {adActionType === 'hint' ? 'Reclamar Pista 💡' : 'Entrar al Siguiente Nivel 🚀'}
+                  </button>
+                )}
+              </div>
+
+              <p className="text-[9.5px] text-slate-500 italic">
+                * Al interactuar con el anuncio, apoyas a que sigan existiendo servidores gratuitos de Zip Cósmico.
+              </p>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }
+
