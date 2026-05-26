@@ -1,0 +1,6 @@
+{
+  "name": "Zip",
+  "description": "Un elegante juego de puzles lógicos al estilo LinkedIn. Conecta los números en orden ascendente trazando una línea continua que visite todas las celdas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,20 @@
+# Netlify configuration file for Zip Cosmic logic game
+
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+# Route all navigation paths to index.html for React SPA
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Custom headers for SEO caching and security
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    X-XSS-Protection = "1; mode=block"
+    Referrer-Policy = "no-referrer-when-downgrade"
