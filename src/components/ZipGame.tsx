@@ -433,7 +433,7 @@ export default function ZipGame() {
     setShowAdModal(true);
 
     // Open Monetag Smart/Direct Link in new tab
-    const monetagDirectLink = "https://alwingulla.com/88/pounce.js";
+    const monetagDirectLink = "https://omg10.com/4/11060058";
     try {
       window.open(monetagDirectLink, '_blank', 'noopener,noreferrer');
     } catch (e) {
